@@ -220,7 +220,7 @@ del_node() {
     echo -e "${GREEN}节点 ${PORT} 已删除。${PLAIN}"
 }
 
-# 7. 流量统计
+# 7. 流量统计 (修复科学计数法报错版)
 show_traffic() {
     echo -e "\n${SKYBLUE}>>> 流量统计 (TCP+UDP)${PLAIN}"
     printf "%-10s %-15s %-15s %-15s\n" "端口" "入站" "出站" "总计"
@@ -228,13 +228,35 @@ show_traffic() {
     for conf in ${CONF_DIR}/*.conf; do
         [ -e "$conf" ] || continue
         PORT=$(basename "$conf" .conf)
-        RX_BYTES=$(iptables -nvx -L INPUT | grep "dpt:$PORT" | awk '{s+=$2} END {print s}')
-        TX_BYTES=$(iptables -nvx -L OUTPUT | grep "spt:$PORT" | awk '{s+=$2} END {print s}')
-        [[ -z "$RX_BYTES" ]] && RX_BYTES=0; [[ -z "$TX_BYTES" ]] && TX_BYTES=0
+        
+        # 核心修复：使用 printf "%.0f" 强制输出完整的纯整数，禁止科学计数法
+        RX_BYTES=$(iptables -nvx -L INPUT | grep "dpt:$PORT" | awk '{s+=$2} END {printf "%.0f", s}')
+        TX_BYTES=$(iptables -nvx -L OUTPUT | grep "spt:$PORT" | awk '{s+=$2} END {printf "%.0f", s}')
+        
+        # 防止空值导致报错
+        [[ -z "$RX_BYTES" ]] && RX_BYTES=0
+        [[ -z "$TX_BYTES" ]] && TX_BYTES=0
+        
+        # 计算总流量
         TOTAL_BYTES=$(echo "$RX_BYTES + $TX_BYTES" | bc)
+
+        # 格式化显示函数
         format_bytes() {
-            num=$1; if [ $num -lt 1024 ]; then echo "${num} B"; elif [ $num -lt 1048576 ]; then echo "$(echo "scale=2; $num/1024" | bc) KB"; elif [ $num -lt 1073741824 ]; then echo "$(echo "scale=2; $num/1024/1024" | bc) MB"; else echo "$(echo "scale=2; $num/1024/1024/1024" | bc) GB"; fi
+            local num=$1
+            # 再次确保传入的是数字
+            if [[ ! "$num" =~ ^[0-9]+$ ]]; then num=0; fi
+            
+            if [ $(echo "$num < 1024" | bc) -eq 1 ]; then 
+                echo "${num} B"
+            elif [ $(echo "$num < 1048576" | bc) -eq 1 ]; then 
+                echo "$(echo "scale=2; $num/1024" | bc) KB"
+            elif [ $(echo "$num < 1073741824" | bc) -eq 1 ]; then 
+                echo "$(echo "scale=2; $num/1024/1024" | bc) MB"
+            else 
+                echo "$(echo "scale=2; $num/1024/1024/1024" | bc) GB"
+            fi
         }
+
         printf "%-10s %-15s %-15s %-15s\n" "$PORT" "$(format_bytes $RX_BYTES)" "$(format_bytes $TX_BYTES)" "$(format_bytes $TOTAL_BYTES)"
     done
 }
